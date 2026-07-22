@@ -67,7 +67,7 @@ class Program
             return Array.Empty<Room>().ToList();
         }
 
-        public bool Connect(Room from, Room to, bool checkForCrossing = true)
+        public bool Connect(Room from, Room to, bool checkForCrossing = true) // The cross check here is now redundant but may be useful
         {
             if(_rooms.Contains(from) && _rooms.Contains(to))
             {
@@ -111,13 +111,17 @@ class Program
                 int randomSlot = _random.Next(0, MaxSlots); // Pick a random slot
                 Room current = GetOrCreateRoom(1, randomSlot); // Start at first floor for each walk, work our way upwards
 
-                for (int floor = 1; floor < maxFloors; floor++)
+                for (int floor = 1; floor < maxFloors - 1; floor++) // Climb up until the last boss
                 {
                     Room nextRoom = GetOrCreateRoom(floor + 1, PickNextSlot(current));
                     Connect(current, nextRoom);
                     current = nextRoom;
                 }
+                
+                Connect(current, GetOrCreateRoom(maxFloors, MaxSlots / 2));
             }
+            
+            
         }
 
         public Room GetOrCreateRoom(int floorNumber, int slot)
@@ -313,7 +317,7 @@ class Program
                 Console.WriteLine($"{floor,3} {RoomRow(BuildRow(floor))}");
 
                 if (floor > 1)
-                    Console.WriteLine($"    {ConnectorRow(BuildRow(floor - 1))}");
+                    Console.WriteLine($"    {ConnectorRow(BuildRow(floor - 1))}"); // The padding here is required, do not remove
             }
         }
     }
@@ -335,6 +339,7 @@ class Program
                 map.PrintGrid(maxFloors);
                 return;
             }
+            // map.PrintGrid(maxFloors);
             map.Validate(maxFloors);
         }
     }
