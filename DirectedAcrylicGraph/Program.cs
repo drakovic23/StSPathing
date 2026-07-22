@@ -35,11 +35,14 @@ class Program
         
         readonly Dictionary<int, List<Room>> _map = new();
         HashSet<Room> _rooms = new();
-        public int MaxSlots { get; private set; } = 4;
+        Random _random;
+        public int MaxSlots { get; private set; } // Max slots per row
         int _seed = 0;
-        public Map(int seed)
+        public Map(int seed, int maxSlots)
         {
             _seed = seed;
+            MaxSlots = maxSlots;
+            _random =  new(_seed);
         }
         public void AddRoomToMap(Room room)
         {
@@ -101,137 +104,87 @@ class Program
         }
         
         // Generate the floors and rooms
-        public void Generate(int maxFloors, int maxRoomsPerFloor)
+        public void Generate(int pathCount, int maxFloors)
         {
-            char characterId = '@';
-            Random random = new(_seed);
-            
-            for (int i = 0; i < maxFloors; i++)
+            for (int i = 0; i < pathCount; i++) // Start at bottom floor level
             {
-                int floorNumber = i + 1;
+                int randomSlot = _random.Next(0, MaxSlots); // Pick a random slot
+                Room current = GetOrCreateRoom(1, randomSlot); // Start at first floor for each walk, work our way upwards
 
-                List<int> availableSlots = new();
-                for (int s = 0; s < MaxSlots; s++)
-                    availableSlots.Add(s);
-                
-                for (int p = 0; p < maxRoomsPerFloor; p++)
+                for (int floor = 1; floor < maxFloors; floor++)
                 {
-                    int availableSlotIdx = random.Next(0, availableSlots.Count);
-                    Room newRoom = new Room(floorNumber, availableSlots[availableSlotIdx]);
-                    availableSlots.RemoveAt(availableSlotIdx);
-                    
-                    newRoom.CharacterId = ++characterId;
-                    
-                    
-                    // Console.WriteLine($"Adding new room to map with floor number: {floorNumber}, ID: {newRoom.CharacterId}");
-                    AddRoomToMap(newRoom);
-                    
-                    if (floorNumber == maxFloors && p == 0) // Boss floor
-                        break;
+                    Room nextRoom = GetOrCreateRoom(floor + 1, PickNextSlot(current));
+                    Connect(current, nextRoom);
+                    current = nextRoom;
                 }
             }
-
-            BuildConnections(maxFloors);
         }
-        
-        // Build the connections
-        public void BuildConnections(int maxFloors)
+
+        public Room GetOrCreateRoom(int floorNumber, int slot)
         {
-            Random random = new(_seed);
-            for (int floorNumber = 2; floorNumber < maxFloors; floorNumber++)
+            if (_map.TryGetValue(floorNumber, out List<Room> rooms))
             {
-                int lowerFloorIdx = floorNumber - 1;
-                foreach (var upperFloorRoom in _map[floorNumber])
+                foreach (var room in rooms)
                 {
-
-
-                    if (floorNumber > 2) // Floors greater than 2 can have multiple connections
-                    {
-                        int left = upperFloorRoom.SlotNumber - 1;
-                        int center = upperFloorRoom.SlotNumber;
-                        int right = upperFloorRoom.SlotNumber + 1;
-
-                        if (left < 0)
-                            left = 0;
-                        if (right > MaxSlots)
-                            right = MaxSlots - 1;
-
-                        int maxConnections = 2;
-                        int connectionsMade = 0;
-                        foreach (var lowerFloorRoom in _map[lowerFloorIdx])
-                        {
-                            if (lowerFloorRoom.SlotNumber == left || lowerFloorRoom.SlotNumber == center || lowerFloorRoom.SlotNumber == right)
-                            {
-                                bool hasConnected = Connect(lowerFloorRoom, upperFloorRoom);
-                                if(hasConnected)
-                                    connectionsMade += 1;
-                                if (connectionsMade >= maxConnections)
-                                    break;
-                            }
-                        }
-                        
-                        if(connectionsMade == 0)
-                            throw new InvalidOperationException($"Failed to find connection for {upperFloorRoom.CharacterId}");
-                    }
-                    else
-                    {
-                        // Pick a floor under our current floor and connect
-                        int randomLowerRoomIndex = random.Next(0, _map[lowerFloorIdx].Count);
-                        Connect(_map[lowerFloorIdx][randomLowerRoomIndex], upperFloorRoom);
-                    }
+                    if (room.FloorNumber == floorNumber && room.SlotNumber == slot) // The room exists
+                        return room;
                 }
             }
+
+            Room newRoom = new Room(floorNumber, slot);
+            newRoom.CharacterId = 'o';
             
-            // Connect our boss room to all lower rooms
-            Room bossRoom = _map[maxFloors][0];
-            foreach (var lowerFloorRoom in _map[maxFloors - 1])
-            {
-                if (!lowerFloorRoom.SuperiorRooms.Contains(bossRoom))
-                {
-                    if(!Connect(lowerFloorRoom, bossRoom, false))
-                        throw new InvalidOperationException($"Failed to connect boss room to {lowerFloorRoom.CharacterId}");
-                }
-            }
+            if(!_map.ContainsKey(newRoom.FloorNumber))
+                _map.Add(floorNumber, new List<Room>());
             
-            // Do a pass from the first floor to the 2nd last floor before the boss and repair any paths
-            for (int floorNumber = 1; floorNumber < maxFloors; floorNumber++)
+            _map[floorNumber].Add(newRoom);
+            _rooms.Add(newRoom);
+            
+            return newRoom;
+        }
+
+        public int PickNextSlot(Room from) // Picks a valid slot from the given room
+        {
+            List<int> availableSlots = new();
+
+            for (int slot = from.SlotNumber - 1; slot <= from.SlotNumber + 1; slot++)
             {
-                foreach (var currentRoom in _map[floorNumber])
+                if (slot < 0 || slot >= MaxSlots)
+                    continue;
+
+                if (!IsValidSlot(from, slot))
+                    continue;
+                
+                availableSlots.Add(slot);
+            }
+
+            if (availableSlots.Count == 0)
+                throw new InvalidOperationException("Unable to find available slots");
+            
+            return availableSlots[_random.Next(0, availableSlots.Count)];
+        }
+
+        bool IsValidSlot(Room from, int toSlot)
+        {
+            foreach (Room neighbor in GetRooms(from.FloorNumber))
+            {
+                if (neighbor == from)
+                    continue;
+
+                foreach (Room connectedRoom in neighbor.SuperiorRooms)
                 {
-                    if (currentRoom.SuperiorRooms.Count == 0)
-                    {
-                        // Console.WriteLine($"Detected dead end on {currentRoom.CharacterId}, repairing..");
+                    int neighborSlot = neighbor.SlotNumber;
+                    int connectedSlot = connectedRoom.SlotNumber;
+                    
+                    bool crossesLeft = toSlot < connectedSlot && from.SlotNumber > neighborSlot;
+                    bool crossesRight = toSlot > connectedSlot && from.SlotNumber < neighborSlot;
 
-                        bool connectionFound = false;
-                        foreach (var topRoom in _map[floorNumber + 1])
-                        {
-                            int left = currentRoom.SlotNumber - 1;
-                            int center = currentRoom.SlotNumber;
-                            int right = currentRoom.SlotNumber + 1;
-
-                            if (left < 0)
-                                left = 0;
-                            if (right > MaxSlots)
-                                right = MaxSlots - 1;
-                            
-                            // Note we only allow one connection here, something to consider
-                            if (topRoom.SlotNumber == left || topRoom.SlotNumber == center || topRoom.SlotNumber == right)
-                            {
-                                bool hasConnected = Connect(currentRoom, topRoom);
-                                
-                                if (hasConnected)
-                                {
-                                    connectionFound = true;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        if(!connectionFound)
-                            throw new InvalidOperationException($"Failed to repair dead end on {currentRoom.CharacterId} on floor {currentRoom.FloorNumber} with slot {currentRoom.SlotNumber}");
-                    }
+                    if (crossesLeft || crossesRight)
+                        return false;
                 }
             }
+
+            return true;
         }
 
         public bool Validate(int maxFloors)
@@ -248,8 +201,6 @@ class Program
             while (roomQueue.Count > 0)
             {
                 var current = roomQueue.Dequeue();
-                int index = 0;
-                
                 foreach (var room in current.SuperiorRooms)
                 {
                     if (!visited.Contains(room))
@@ -298,16 +249,17 @@ class Program
 
         public bool CheckForDeadEnds(int maxFloors)
         {
-            ConsoleColor originalColor = Console.ForegroundColor;
-            Console.ForegroundColor = ConsoleColor.Red;
+
             foreach (var room in _rooms)
                 if (room.FloorNumber < maxFloors && room.SuperiorRooms.Count == 0)
                 {
+                    ConsoleColor originalColor = Console.ForegroundColor;
+                    Console.ForegroundColor = ConsoleColor.Red;
                     Console.WriteLine($"DEAD END: {room.CharacterId} on floor {room.FloorNumber}");
+                    Console.ForegroundColor = originalColor;
                     return true;
                 }
             
-            Console.ForegroundColor = originalColor;
 
             return false;
         }
@@ -369,21 +321,21 @@ class Program
     static void Main(string[] args)
     {
         int maxFloors = 10;
-        int maxRoomsPerFloor = 2;
+        int maxSlots = 7;
         for (int i = 0; i < 10000; i++)
         {
-            Map map = new(i);
+            Map map = new(0, maxSlots);
             try
             {
-                map.Generate(maxFloors, maxRoomsPerFloor);
+                map.Generate(6, maxFloors);
             }
             catch (Exception e)
             {
-                Console.WriteLine($"Caught Exception: {e.Message}");
+                Console.WriteLine($"Caught Exception: {e.ToString()}");
                 map.PrintGrid(maxFloors);
                 return;
             }
-            map.Validate(20);
+            map.Validate(maxFloors);
         }
     }
 }
