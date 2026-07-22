@@ -9,19 +9,24 @@ class Program
         public class Room
         {
             public int FloorNumber { get; private set; }
+            public int SlotNumber { get; private set; }
             readonly List<Room> _superiorRooms;
             public IReadOnlyList<Room> SuperiorRooms => _superiorRooms;
-            public char CharacterId; // This is temporary
-            internal Room(int floorNumber)
+            public char CharacterId; // This is for debugging purposes for this example
+            internal Room(int floorNumber, int slotNumber)
             {
                 FloorNumber = floorNumber;
+                SlotNumber = slotNumber;
                 _superiorRooms = new();
             }
             public bool AddConnection(Room room)
             {
                 if (room.FloorNumber != this.FloorNumber + 1)
                     return false;
-            
+
+                if (_superiorRooms.Contains(room))
+                    return false;
+                
                 _superiorRooms.Add(room);
                 return true;
             }
@@ -29,6 +34,7 @@ class Program
         
         readonly Dictionary<int, List<Room>> _map = new();
         HashSet<Room> _rooms = new();
+        public int MaxSlots { get; private set; } = 4;
         public void AddRoomToMap(Room room)
         {
             if (_rooms.Contains(room)) // Duplicate map
@@ -56,6 +62,24 @@ class Program
         {
             if(_rooms.Contains(from) && _rooms.Contains(to))
             {
+                List<Room> roomsOnFloorFrom = _map[from.FloorNumber];
+
+                foreach (var otherRooms in roomsOnFloorFrom)
+                {
+                    if (otherRooms == from) // Don't check the room against itself
+                        continue;
+
+                    foreach (Room connectedRoom in otherRooms.SuperiorRooms)
+                    {
+                        bool crossesLeft = to.SlotNumber < connectedRoom.SlotNumber && from.SlotNumber > otherRooms.SlotNumber;
+                        bool crossesRight = to.SlotNumber > connectedRoom.SlotNumber && from.SlotNumber < otherRooms.SlotNumber;
+                        
+                        if(crossesLeft || crossesRight)
+                        {
+                            return false;
+                        }
+                    }
+                }
                 if (from.AddConnection(to))
                 {
                     // Console.WriteLine($"Connected: {from.CharacterId} to {to.CharacterId}");
@@ -65,20 +89,28 @@ class Program
 
             return false;
         }
-
+        
+        // Generate the floors and rooms
         public void Generate(int maxFloors, int maxRoomsPerFloor)
         {
             char characterId = '@';
+            Random random = new();
             
             for (int i = 0; i < maxFloors; i++)
             {
                 int floorNumber = i + 1;
+
+                List<int> availableSlots = new();
+                for (int s = 0; s < MaxSlots; s++)
+                    availableSlots.Add(s);
                 
                 for (int p = 0; p < maxRoomsPerFloor; p++)
                 {
-                    Room newRoom = new Room(floorNumber);
+                    int availableSlotIdx = random.Next(0, availableSlots.Count);
+                    Room newRoom = new Room(floorNumber, availableSlots[availableSlotIdx]);
+                    availableSlots.RemoveAt(availableSlotIdx);
+                    
                     newRoom.CharacterId = ++characterId;
-
                     
                     
                     // Console.WriteLine($"Adding new room to map with floor number: {floorNumber}, ID: {newRoom.CharacterId}");
@@ -91,18 +123,49 @@ class Program
 
             BuildConnections(maxFloors);
         }
-
+        
+        // Build the connections
         public void BuildConnections(int maxFloors)
         {
             Random random = new();
             for (int floorNumber = 2; floorNumber < maxFloors; floorNumber++)
             {
-                int lowerFloor = floorNumber - 1;
+                int lowerFloorIdx = floorNumber - 1;
                 foreach (var upperFloorRoom in _map[floorNumber])
                 {
-                    // Pick a floor under our current floor and connect
-                    int randomLowerRoomIndex = random.Next(0, _map[lowerFloor].Count);
-                    Connect(_map[lowerFloor][randomLowerRoomIndex], upperFloorRoom);
+
+
+                    if (floorNumber > 2) // Floors greater than 2 can have multiple connections
+                    {
+                        int left = upperFloorRoom.SlotNumber - 1;
+                        int center = upperFloorRoom.SlotNumber;
+                        int right = upperFloorRoom.SlotNumber + 1;
+
+                        if (left < 0)
+                            left = 0;
+                        if (right > MaxSlots)
+                            right = MaxSlots;
+
+                        int maxConnections = 2;
+                        int connectionsMade = 0;
+                        foreach (var lowerFloorRoom in _map[lowerFloorIdx])
+                        {
+                            if (lowerFloorRoom.SlotNumber == left || lowerFloorRoom.SlotNumber == center || lowerFloorRoom.SlotNumber == right)
+                            {
+                                bool hasConnected = Connect(lowerFloorRoom, upperFloorRoom);
+                                if(hasConnected)
+                                    connectionsMade += 1;
+                                if (connectionsMade >= maxConnections)
+                                    break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Pick a floor under our current floor and connect
+                        int randomLowerRoomIndex = random.Next(0, _map[lowerFloorIdx].Count);
+                        Connect(_map[lowerFloorIdx][randomLowerRoomIndex], upperFloorRoom);
+                    }
                 }
             }
             
@@ -126,12 +189,33 @@ class Program
                     {
                         // Console.WriteLine($"Detected dead end on {currentRoom.CharacterId}, repairing..");
 
-                        int roomIndex = random.Next(0, _map[floorNumber + 1].Count);
-                        Room connectingRoom = _map[floorNumber + 1][roomIndex];
-                        if (!Connect(currentRoom, connectingRoom))
+                        bool connectionFound = false;
+                        foreach (var topRoom in _map[floorNumber + 1])
                         {
-                            throw new InvalidOperationException($"Failed to repair dead end at {currentRoom.CharacterId}");
+                            int left = currentRoom.SlotNumber - 1;
+                            int center = currentRoom.SlotNumber;
+                            int right = currentRoom.SlotNumber + 1;
+
+                            if (left < 0)
+                                left = 0;
+                            if (right > MaxSlots)
+                                right = MaxSlots;
+                            
+                            // Note we only allow one connection here, something to consider
+                            if (topRoom.SlotNumber == left || topRoom.SlotNumber == center || topRoom.SlotNumber == right)
+                            {
+                                bool hasConnected = Connect(currentRoom, topRoom);
+                                
+                                if (hasConnected)
+                                {
+                                    connectionFound = true;
+                                    break;
+                                }
+                            }
                         }
+                        
+                        if(!connectionFound)
+                            throw new InvalidOperationException($"Failed to repair dead end at {floorNumber}");
                     }
                 }
             }
