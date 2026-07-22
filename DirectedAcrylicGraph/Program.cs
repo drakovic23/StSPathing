@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Text;
 
 namespace DirectedAcrylicGraph;
 
@@ -35,6 +36,11 @@ class Program
         readonly Dictionary<int, List<Room>> _map = new();
         HashSet<Room> _rooms = new();
         public int MaxSlots { get; private set; } = 4;
+        int _seed = 0;
+        public Map(int seed)
+        {
+            _seed = seed;
+        }
         public void AddRoomToMap(Room room)
         {
             if (_rooms.Contains(room)) // Duplicate map
@@ -58,28 +64,32 @@ class Program
             return Array.Empty<Room>().ToList();
         }
 
-        public bool Connect(Room from, Room to)
+        public bool Connect(Room from, Room to, bool checkForCrossing = true)
         {
             if(_rooms.Contains(from) && _rooms.Contains(to))
             {
                 List<Room> roomsOnFloorFrom = _map[from.FloorNumber];
 
-                foreach (var otherRooms in roomsOnFloorFrom)
+                if (checkForCrossing)
                 {
-                    if (otherRooms == from) // Don't check the room against itself
-                        continue;
-
-                    foreach (Room connectedRoom in otherRooms.SuperiorRooms)
+                    foreach (var neighborRooms in roomsOnFloorFrom)
                     {
-                        bool crossesLeft = to.SlotNumber < connectedRoom.SlotNumber && from.SlotNumber > otherRooms.SlotNumber;
-                        bool crossesRight = to.SlotNumber > connectedRoom.SlotNumber && from.SlotNumber < otherRooms.SlotNumber;
-                        
-                        if(crossesLeft || crossesRight)
+                        if (neighborRooms == from) // Don't check the room against itself
+                            continue;
+
+                        foreach (Room connectedRoom in neighborRooms.SuperiorRooms)
                         {
-                            return false;
+                            bool crossesLeft = to.SlotNumber < connectedRoom.SlotNumber && from.SlotNumber > neighborRooms.SlotNumber;
+                            bool crossesRight = to.SlotNumber > connectedRoom.SlotNumber && from.SlotNumber < neighborRooms.SlotNumber;
+                        
+                            if(crossesLeft || crossesRight)
+                            {
+                                return false;
+                            }
                         }
                     }
                 }
+
                 if (from.AddConnection(to))
                 {
                     // Console.WriteLine($"Connected: {from.CharacterId} to {to.CharacterId}");
@@ -94,7 +104,7 @@ class Program
         public void Generate(int maxFloors, int maxRoomsPerFloor)
         {
             char characterId = '@';
-            Random random = new();
+            Random random = new(_seed);
             
             for (int i = 0; i < maxFloors; i++)
             {
@@ -127,7 +137,7 @@ class Program
         // Build the connections
         public void BuildConnections(int maxFloors)
         {
-            Random random = new();
+            Random random = new(_seed);
             for (int floorNumber = 2; floorNumber < maxFloors; floorNumber++)
             {
                 int lowerFloorIdx = floorNumber - 1;
@@ -144,7 +154,7 @@ class Program
                         if (left < 0)
                             left = 0;
                         if (right > MaxSlots)
-                            right = MaxSlots;
+                            right = MaxSlots - 1;
 
                         int maxConnections = 2;
                         int connectionsMade = 0;
@@ -159,6 +169,9 @@ class Program
                                     break;
                             }
                         }
+                        
+                        if(connectionsMade == 0)
+                            throw new InvalidOperationException($"Failed to find connection for {upperFloorRoom.CharacterId}");
                     }
                     else
                     {
@@ -175,8 +188,8 @@ class Program
             {
                 if (!lowerFloorRoom.SuperiorRooms.Contains(bossRoom))
                 {
-                    if(!Connect(lowerFloorRoom, bossRoom))
-                        throw new InvalidOperationException($"Failed to repair dead end at {lowerFloorRoom.CharacterId}");
+                    if(!Connect(lowerFloorRoom, bossRoom, false))
+                        throw new InvalidOperationException($"Failed to connect boss room to {lowerFloorRoom.CharacterId}");
                 }
             }
             
@@ -199,7 +212,7 @@ class Program
                             if (left < 0)
                                 left = 0;
                             if (right > MaxSlots)
-                                right = MaxSlots;
+                                right = MaxSlots - 1;
                             
                             // Note we only allow one connection here, something to consider
                             if (topRoom.SlotNumber == left || topRoom.SlotNumber == center || topRoom.SlotNumber == right)
@@ -215,7 +228,7 @@ class Program
                         }
                         
                         if(!connectionFound)
-                            throw new InvalidOperationException($"Failed to repair dead end at {floorNumber}");
+                            throw new InvalidOperationException($"Failed to repair dead end on {currentRoom.CharacterId} on floor {currentRoom.FloorNumber} with slot {currentRoom.SlotNumber}");
                     }
                 }
             }
@@ -298,14 +311,78 @@ class Program
 
             return false;
         }
+
+        public Room[] BuildRow(int floor)
+        {
+            Room[] row = new Room[MaxSlots];
+            foreach (Room room in GetRooms(floor))
+            {
+                row[room.SlotNumber] = room;
+            }
+
+            return row;
+        }
+
+        const int GRID_CELL_WIDTH = 4;
+        int Center(int slot) => slot * GRID_CELL_WIDTH + 1;
+
+        string RoomRow(Room[] row)
+        {
+            char[] line = new string(' ', MaxSlots * GRID_CELL_WIDTH).ToCharArray();
+            for (int slot = 0; slot < MaxSlots; slot++)
+                line[Center(slot)] = row[slot]?.CharacterId ?? '.';
+            return new string(line);
+        }
+        
+        string ConnectorRow(Room[] lowerRow)
+        {
+            char[] line = new string(' ', MaxSlots * GRID_CELL_WIDTH).ToCharArray();
+
+            foreach (Room from in lowerRow)
+            {
+                if (from == null) continue;
+
+                foreach (Room to in from.SuperiorRooms)
+                {
+                    int delta = to.SlotNumber - from.SlotNumber;
+                    int x = Center(from.SlotNumber) + delta * (GRID_CELL_WIDTH / 2);
+                    char glyph = delta == 0 ? '|' : delta > 0 ? '/' : '\\';
+
+                    line[x] = (line[x] == ' ' || line[x] == glyph) ? glyph : 'X';
+                }
+            }
+
+            return new string(line);
+        }
+        public void PrintGrid(int maxFloors)
+        {
+            for (int floor = maxFloors; floor >= 1; floor--)
+            {
+                Console.WriteLine($"{floor,3} {RoomRow(BuildRow(floor))}");
+
+                if (floor > 1)
+                    Console.WriteLine($"    {ConnectorRow(BuildRow(floor - 1))}");
+            }
+        }
     }
 
     static void Main(string[] args)
     {
+        int maxFloors = 10;
+        int maxRoomsPerFloor = 2;
         for (int i = 0; i < 10000; i++)
         {
-            Map map = new();
-            map.Generate(20, 2);
+            Map map = new(i);
+            try
+            {
+                map.Generate(maxFloors, maxRoomsPerFloor);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Caught Exception: {e.Message}");
+                map.PrintGrid(maxFloors);
+                return;
+            }
             map.Validate(20);
         }
     }
