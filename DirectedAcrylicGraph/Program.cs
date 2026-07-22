@@ -67,40 +67,13 @@ class Program
             return Array.Empty<Room>().ToList();
         }
 
-        public bool Connect(Room from, Room to, bool checkForCrossing = true) // The cross check here is now redundant but may be useful
+        void Connect(Room from, Room to)
         {
-            if(_rooms.Contains(from) && _rooms.Contains(to))
-            {
-                List<Room> roomsOnFloorFrom = _map[from.FloorNumber];
+            if (to.FloorNumber != from.FloorNumber + 1)
+                throw new ArgumentException(
+                $"Cannot connect floor {from.FloorNumber} to floor {to.FloorNumber}");
 
-                if (checkForCrossing)
-                {
-                    foreach (var neighborRooms in roomsOnFloorFrom)
-                    {
-                        if (neighborRooms == from) // Don't check the room against itself
-                            continue;
-
-                        foreach (Room connectedRoom in neighborRooms.SuperiorRooms)
-                        {
-                            bool crossesLeft = to.SlotNumber < connectedRoom.SlotNumber && from.SlotNumber > neighborRooms.SlotNumber;
-                            bool crossesRight = to.SlotNumber > connectedRoom.SlotNumber && from.SlotNumber < neighborRooms.SlotNumber;
-                        
-                            if(crossesLeft || crossesRight)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-                }
-
-                if (from.AddConnection(to))
-                {
-                    // Console.WriteLine($"Connected: {from.CharacterId} to {to.CharacterId}");
-                    return true;
-                }
-            }
-
-            return false;
+            from.AddConnection(to);   // Silently fail if the edge already exists
         }
         
         // Generate the floors and rooms
